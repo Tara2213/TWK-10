@@ -2,10 +2,8 @@ import streamlit as st
 import google.generativeai as genai
 import os
 
-# --- 頁面配置 ---
-st.set_page_config(page_title="TWK10 益生菌技術專家系統", layout="wide")
-
-# --- 系統指令 (System Prompt) ---
+# --- 1. 系統指令 (System Prompt) ---
+# 這裡完整嵌入你要求的 PM 支援角色規範
 SYSTEM_PROMPT = """
 你是一位公司內部的生技產品專家（PM 支援角色），主要職責是精準回覆業務端提出的產品技術與研究詢問。
 你的回答僅限於「解讀既有產品資料與研究結果」，禁止進行產品規劃、配方設計或任何開發建議。
@@ -58,70 +56,92 @@ SYSTEM_PROMPT = """
 - 語言：一律使用繁體中文。
 """
 
-# --- 側邊欄設定 ---
-with st.sidebar:
-    st.title("⚙️ 設定")
-    api_key = st.text_input("輸入 Gemini API Key:", type="password")
-    uploaded_files = st.file_uploader("上傳研究文獻 (PDF)", accept_multiple_files=True, type=['pdf'])
-    st.info("請上傳 TWK10 相關文獻，AI 將基於這些文件進行分析。")
+# --- 2. 介面設定 ---
+st.set_page_config(page_title="TWK10 技術轉譯系統 (Gemini 2.5 Pro)", layout="wide")
+st.title("🧬 TWK10 技術與轉譯支援系統")
+st.subheader("核心模型：Gemini 2.5 Pro")
 
-# --- 初始化 AI 模型 ---
+# --- 3. 側邊欄設定 ---
+with st.sidebar:
+    st.header("⚙️ API 設定")
+    # 優先嘗試從 Streamlit Secrets 讀取
+    api_key_placeholder = st.secrets.get("GEMINI_API_KEY", "")
+    api_key = st.text_input("輸入 Gemini API Key:", value=api_key_placeholder, type="password")
+    
+    st.markdown("---")
+    st.header("📚 知識庫上傳")
+    uploaded_files = st.file_uploader("上傳 TWK10 研究文獻 (PDF)", accept_multiple_files=True, type=['pdf'])
+    st.info("AI 將嚴格遵守閉環資料原則，僅分析您上傳的文件。")
+
+# --- 4. 初始化 Gemini 2.5 Pro ---
 if api_key:
-    genai.configure(api_key=api_key)
-    # 使用 Flash 模型以獲得最高效能與免費額度
-    model = genai.GenerativeModel(
-        model_name="models/gemini-1.5-flash",
-        system_instruction=SYSTEM_PROMPT
-    )
+    try:
+        genai.configure(api_key=api_key)
+        # 指定使用 Gemini 2.5 Pro 模型
+        model = genai.GenerativeModel(
+            model_name="models/gemini-2.5-pro", 
+            system_instruction=SYSTEM_PROMPT,
+            generation_config={
+                "temperature": 0.1,  # 極低溫度，確保嚴謹性
+                "top_p": 0.95,
+                "max_output_tokens": 2048,
+            }
+        )
+    except Exception as e:
+        st.error(f"模型初始化失敗：{e}")
+        st.stop()
 else:
-    st.warning("請先在左側輸入 API Key 才能開始使用。")
+    st.warning("請輸入 API Key 以啟動系統。")
     st.stop()
 
-# --- 處理上傳的文件 ---
-processed_files = []
+# --- 5. 處理與上傳文件至 Gemini ---
+processed_docs = []
 if uploaded_files:
-    for uploaded_file in uploaded_files:
-        # 將 Streamlit 的上傳物件轉存為暫存檔供 API 讀取
-        with open(uploaded_file.name, "wb") as f:
-            f.write(uploaded_file.getbuffer())
+    for f in uploaded_files:
+        # 暫存檔案以供上傳
+        temp_path = f"temp_{f.name}"
+        with open(temp_path, "wb") as tmp:
+            tmp.write(f.read())
         
-        with st.spinner(f"正在分析文獻: {uploaded_file.name}..."):
-            genai_file = genai.upload_file(path=uploaded_file.name)
-            processed_files.append(genai_file)
-        # 刪除本地暫存
-        os.remove(uploaded_file.name)
+        with st.spinner(f"正在分析文獻: {f.name}..."):
+            # 使用 Gemini 的 File API 上傳文件
+            genai_file = genai.upload_file(path=temp_path)
+            processed_docs.append(genai_file)
+        os.remove(temp_path)
 
-# --- 聊天介面 ---
-st.title("🧬 TWK10 技術與轉譯支援系統")
-st.markdown("---")
-
-if "messages" not in st.session_state:
-    st.session_state.messages = []
+# --- 6. 聊天對話區 ---
+if "chat_history" not in st.session_state:
+    st.session_state.chat_history = []
 
 # 顯示歷史訊息
-for message in st.session_state.messages:
-    with st.chat_message(message["role"]):
-        st.markdown(message["content"])
+for chat in st.session_state.chat_history:
+    with st.chat_message(chat["role"]):
+        st.markdown(chat["content"])
 
-# 使用者輸入
-if prompt := st.chat_input("請輸入業務端的問題..."):
-    st.session_state.messages.append({"role": "user", "content": prompt})
+# 接收業務詢問
+if user_input := st.chat_input("請輸入業務提出的問題..."):
+    st.session_state.chat_history.append({"role": "user", "content": user_input})
     with st.chat_message("user"):
-        st.markdown(prompt)
+        st.markdown(user_input)
 
     with st.chat_message("assistant"):
-        message_placeholder = st.empty()
-        
-        # 組合輸入內容（包含文件與提問）
-        content_to_send = []
-        if processed_files:
-            content_to_send.extend(processed_files)
-        content_to_send.append(prompt)
-        
         try:
-            response = model.generate_content(content_to_send)
-            full_response = response.text
-            message_placeholder.markdown(full_response)
-            st.session_state.messages.append({"role": "assistant", "content": full_response})
+            # 準備輸入載體：包含所有上傳的文件與最新的問題
+            content_payload = []
+            if processed_docs:
+                content_payload.extend(processed_docs)
+            content_payload.append(user_input)
+            
+            # 執行生成
+            response = model.generate_content(content_payload)
+            
+            # 顯示結果
+            output_text = response.text
+            st.markdown(output_text)
+            st.session_state.chat_history.append({"role": "assistant", "content": output_text})
+            
         except Exception as e:
-            st.error(f"執行出錯：{str(e)}")
+            if "404" in str(e):
+                st.error("錯誤：API 找不到 'models/gemini-2.5-pro'。請確認您的 API Key 是否具備此模型的存取權限，或者該模型在您的區域是否已正式開放。")
+            else:
+                st.error(f"分析失敗：{e}")
