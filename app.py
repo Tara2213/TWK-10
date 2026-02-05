@@ -1,35 +1,33 @@
 import streamlit as st
 import google.generativeai as genai
+import os
 
-# 安全讀取 API KEY
-try:
-    API_KEY = st.secrets
-except:
-    st.error("請在 Streamlit Cloud 後台設定 GEMINI_API_KEY")
-    st.stop()
+# --- 頁面配置 ---
+st.set_page_config(page_title="TWK10 益生菌技術專家系統", layout="wide")
 
-genai.configure(api_key=API_KEY)
-
-# 定義您的核心系統邏輯
+# --- 系統指令 (System Prompt) ---
 SYSTEM_PROMPT = """
-# 系統角色
 你是一位公司內部的生技產品專家（PM 支援角色），主要職責是精準回覆業務端提出的產品技術與研究詢問。
 你的回答僅限於「解讀既有產品資料與研究結果」，禁止進行產品規劃、配方設計或任何開發建議。
+
 主要核心產品：TWK10 益生菌原料。
 
-# 核心原則
+# 核心原則（最高優先權）
 1. 閉環資料原則：所有回答必須嚴格僅依據使用者上傳的文件、文獻或系統既有試驗結果。嚴禁調用預訓練模型中的通用常識或網路資訊。
 2. 零推測原則：若資料中未提及特定數據，不可進行任何邏輯推論。
 3. 誠實拒絕：當資料不足時，必須僅回覆：「此問題目前資料不足，請聯絡 PM 進一步確認。」並立即停止回答。
 
 # 功能性回答前之【強制判斷流程】（不可跳過）
 針對任何功效詢問，必須依序執行以下檢核並輸出對應標籤：
-- 情境 A (查無資料)：若人體與動物實驗皆未進行該功能研究。
-  → 輸出：【判定：查無研究數據】此功能性目前不可作為產品功能訴求或開發方向。(直接結束)
-- 情境 B (僅有動物實驗)：
+
+● 情境 A (查無資料)：若人體與動物實驗皆未進行該功能研究。
+  → 輸出：【判定：查無研究數據】此功能性目前不可作為產品功能訴求或開發方向。 (直接結束)
+
+● 情境 B (僅有動物實驗)：
   → 輸出標籤：【實驗層級：動物實驗觀察】
   → 規範：僅說明生化機制。必須強制加上警語：「此功能性尚未經人體臨床試驗驗證，不可作為人體功效宣稱。」
-- 情境 C (具備人體臨床)：
+
+● 情境 C (具備人體臨床)：
   → 輸出標籤：【實驗層級：人體臨床試驗】
   → 規範：以此為唯一核心依據。動物實驗僅能作為背景補充，不得超出該臨床試驗的受試對象與結果範圍。
 
@@ -43,7 +41,7 @@ SYSTEM_PROMPT = """
 - 嚴禁建議：不提供配方、劑量建議或開發方向。
 - 嚴禁互動：禁止反問使用者、禁止邀請補充資訊、禁止使用任何結尾引導語。
 - 嚴禁跨案：禁止與其他菌株進行未經實驗證實的比較。
-- 完成事實描述後，直接結束回答。
+- 完成事實描述後，請直接結束回答。
 
 # 技術回應與引用規範
 - 科學轉譯：將技術數據轉換為業務可理解的「易懂版本」，但必須確保語意精準不誇大。
@@ -60,46 +58,70 @@ SYSTEM_PROMPT = """
 - 語言：一律使用繁體中文。
 """
 
-# Streamlit 介面設定
-st.set_page_config(page_title="TWK10 產品技術支援系統", layout="centered")
-st.title("🧬 TWK10 生技專家支援系統")
-st.caption("本系統僅供內部業務人員查詢產品技術資訊與研究結果。")
+# --- 側邊欄設定 ---
+with st.sidebar:
+    st.title("⚙️ 設定")
+    api_key = st.text_input("輸入 Gemini API Key:", type="password")
+    uploaded_files = st.file_uploader("上傳研究文獻 (PDF)", accept_multiple_files=True, type=['pdf'])
+    st.info("請上傳 TWK10 相關文獻，AI 將基於這些文件進行分析。")
 
-# 初始化對話
+# --- 初始化 AI 模型 ---
+if api_key:
+    genai.configure(api_key=api_key)
+    # 使用 Flash 模型以獲得最高效能與免費額度
+    model = genai.GenerativeModel(
+        model_name="gemini-1.5-flash",
+        system_instruction=SYSTEM_PROMPT
+    )
+else:
+    st.warning("請先在左側輸入 API Key 才能開始使用。")
+    st.stop()
+
+# --- 處理上傳的文件 ---
+processed_files = []
+if uploaded_files:
+    for uploaded_file in uploaded_files:
+        # 將 Streamlit 的上傳物件轉存為暫存檔供 API 讀取
+        with open(uploaded_file.name, "wb") as f:
+            f.write(uploaded_file.getbuffer())
+        
+        with st.spinner(f"正在分析文獻: {uploaded_file.name}..."):
+            genai_file = genai.upload_file(path=uploaded_file.name)
+            processed_files.append(genai_file)
+        # 刪除本地暫存
+        os.remove(uploaded_file.name)
+
+# --- 聊天介面 ---
+st.title("🧬 TWK10 技術與轉譯支援系統")
+st.markdown("---")
+
 if "messages" not in st.session_state:
-    st.session_state.messages =
+    st.session_state.messages = []
 
-# 顯示對話歷史
+# 顯示歷史訊息
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
         st.markdown(message["content"])
 
-# 處理業務輸入
-if prompt := st.chat_input("請輸入產品相關技術問題..."):
-    # 將使用者輸入加入紀錄
+# 使用者輸入
+if prompt := st.chat_input("請輸入業務端的問題..."):
     st.session_state.messages.append({"role": "user", "content": prompt})
     with st.chat_message("user"):
         st.markdown(prompt)
 
     with st.chat_message("assistant"):
-        # 顯示處理中的標籤
-        placeholder = st.empty()
-        placeholder.markdown("🔍 正在檢索內部文件...")
-
-        # 配置模型
-        model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash",
-            system_instruction=SYSTEM_PROMPT
-        )
+        message_placeholder = st.empty()
+        
+        # 組合輸入內容（包含文件與提問）
+        content_to_send = []
+        if processed_files:
+            content_to_send.extend(processed_files)
+        content_to_send.append(prompt)
         
         try:
-            # 發送請求，此處可結合 Gemini 的 File API 或 RAG 邏輯
-            # 在目前的純程式碼架構中，Gemini 會基於您在 Prompt 中提及的原則處理
-            response = model.generate_content(prompt)
+            response = model.generate_content(content_to_send)
             full_response = response.text
-            
-            placeholder.markdown(full_response)
+            message_placeholder.markdown(full_response)
             st.session_state.messages.append({"role": "assistant", "content": full_response})
-            
         except Exception as e:
-            st.error(f"系統暫時無法處理您的請求。請確認資料庫狀態。")
+            st.error(f"執行出錯：{str(e)}")
