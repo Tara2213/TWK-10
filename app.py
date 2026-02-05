@@ -79,7 +79,7 @@ if api_key:
         genai.configure(api_key=api_key)
         # 指定使用 Gemini 2.5 Pro 模型
         model = genai.GenerativeModel(
-            model_name="models/gemini-2.5-pro", 
+            model_name="models/gemini-1.5-flash", 
             system_instruction=SYSTEM_PROMPT,
             generation_config={
                 "temperature": 0.1,  # 極低溫度，確保嚴謹性
