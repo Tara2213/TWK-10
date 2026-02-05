@@ -70,7 +70,7 @@ if api_key:
     genai.configure(api_key=api_key)
     # 使用 Flash 模型以獲得最高效能與免費額度
     model = genai.GenerativeModel(
-        model_name="gemini-1.5-flash",
+        model_name="models/gemini-1.5-flash",
         system_instruction=SYSTEM_PROMPT
     )
 else:
